@@ -1,0 +1,994 @@
+<!-- file: index.html -->
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mesin Capit - Web Sederhana</title>
+    <style>
+      :root {
+        --bg0: #050914;
+        --bg1: #0b1220;
+        --glass: rgba(255,255,255,0.08);
+        --glass2: rgba(255,255,255,0.12);
+        --stroke: rgba(255,255,255,0.12);
+        --neon: rgba(124,255,232,0.45);
+        --warn: rgba(255,200,80,0.45);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        background: radial-gradient(1200px 800px at 50% 0%, #101b2c 0%, #050914 55%, #030610 100%);
+        color: white;
+        display: grid;
+        place-items: center;
+        padding: 18px;
+      }
+      .app {
+        width: min(980px, 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .cards { display: flex; gap: 10px; flex-wrap: wrap; }
+      .card {
+        border: 1px solid var(--stroke);
+        background: rgba(255,255,255,0.07);
+        border-radius: 18px;
+        padding: 10px 14px;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+      }
+      .card .k { font-size: 12px; opacity: 0.8; }
+      .card .v { font-size: 22px; font-weight: 800; letter-spacing: 0.5px; }
+      .card.small .v { font-size: 14px; font-weight: 700; opacity: 0.95; }
+      .actions { display: flex; gap: 8px; }
+      button {
+        border: 1px solid var(--stroke);
+        background: rgba(255,255,255,0.08);
+        color: white;
+        padding: 10px 12px;
+        border-radius: 18px;
+        cursor: pointer;
+        transition: transform .08s ease, background .15s ease;
+      }
+      button:hover { background: rgba(255,255,255,0.12); }
+      button:active { transform: translateY(1px); }
+      .stage-wrap {
+        position: relative;
+        width: 100%;
+        height: min(72vh, 640px);
+        min-height: 520px;
+        border-radius: 26px;
+        overflow: hidden;
+        border: 1px solid var(--stroke);
+        background: linear-gradient(180deg, #050914 0%, #030612 100%);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+        user-select: none;
+        touch-action: none;
+      }
+      canvas { display: block; width: 100%; height: 100%; }
+      .hint {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        font-size: 12px;
+        color: rgba(255,255,255,0.75);
+        padding: 10px 12px;
+        border-radius: 18px;
+        background: rgba(0,0,0,0.28);
+        border: 1px solid rgba(255,255,255,0.10);
+        backdrop-filter: blur(10px);
+      }
+      .footer {
+        font-size: 12px;
+        opacity: 0.75;
+        line-height: 1.5;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(255,255,255,0.06);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div class="cards">
+          <div class="card">
+            <div class="k">Skor</div>
+            <div class="v" id="score">0</div>
+          </div>
+          <div class="card small">
+            <div class="k">Terakhir</div>
+            <div class="v" id="last">—</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="resetBtn" title="Reset (R)">Reset</button>
+          <button id="muteBtn" title="Mute (M)">Mute</button>
+        </div>
+      </div>
+
+      <div class="stage-wrap" id="wrap">
+        <canvas id="c"></canvas>
+        <div class="hint">Klik untuk geser. Double click/tap untuk jatuhkan.</div>
+      </div>
+
+      <div class="footer">
+        Tips: Incar mainan yang pas di bawah lingkaran grip. Mainan lebih berat (skor tinggi) cenderung lebih susah dicapit.
+        <span class="pill">←/→ atau A/D</span>
+        <span class="pill">SPACE/↓</span>
+        <span class="pill">R</span>
+        <span class="pill">M</span>
+      </div>
+    </div>
+
+    <script>
+      // ===== Utilities =====
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const smoothstep = (t) => {
+        const x = clamp(t, 0, 1);
+        return x * x * (3 - 2 * x);
+      };
+      const rand = (min, max) => min + Math.random() * (max - min);
+      const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const circleOverlap = (a, b) => dist(a, b) <= a.r + b.r;
+      const hsl = (h, s, l, a = 1) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
+
+      function drawRoundedRect(ctx, x, y, w, h, r) {
+        const rr = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.arcTo(x + w, y, x + w, y + h, rr);
+        ctx.arcTo(x + w, y + h, x, y + h, rr);
+        ctx.arcTo(x, y + h, x, y, rr);
+        ctx.arcTo(x, y, x + w, y, rr);
+        ctx.closePath();
+      }
+
+      function textShadow(ctx, enable) {
+        if (enable) {
+          ctx.shadowColor = "rgba(0,0,0,0.25)";
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 6;
+        } else {
+          ctx.shadowColor = "transparent";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+        }
+      }
+
+      function formatScore(n) {
+        try { return n.toLocaleString("id-ID"); } catch { return String(n); }
+      }
+
+      // ===== Audio (optional) =====
+      let audioCtx = null;
+      const audio = {
+        async resume() {
+          if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state !== "running") await audioCtx.resume();
+        },
+        beep(freq, durMs, type, gain) {
+          if (!audioCtx) return;
+          const now = audioCtx.currentTime;
+          const o = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          o.type = type;
+          o.frequency.setValueAtTime(freq, now);
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.exponentialRampToValueAtTime(gain, now + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + durMs / 1000);
+          o.connect(g);
+          g.connect(audioCtx.destination);
+          o.start(now);
+          o.stop(now + durMs / 1000 + 0.02);
+        },
+        tick() { this.beep(420, 40, "square", 0.06); },
+        drop() { this.beep(220, 90, "sawtooth", 0.07); },
+        grab() {
+          this.beep(660, 80, "triangle", 0.07);
+          setTimeout(() => this.beep(880, 60, "triangle", 0.05), 70);
+        },
+        miss() { this.beep(140, 120, "square", 0.07); },
+        score() {
+          this.beep(740, 70, "triangle", 0.08);
+          setTimeout(() => this.beep(990, 70, "triangle", 0.06), 90);
+          setTimeout(() => this.beep(1240, 70, "triangle", 0.05), 180);
+        },
+      };
+
+      // ===== Toy definitions =====
+      function pickToyDefinition() {
+        const defs = [
+          { label: "Bebek", score: 50,  r: 16, mass: 1.0, hue: 50  },
+          { label: "Panda", score: 120, r: 18, mass: 1.2, hue: 210 },
+          { label: "Robot", score: 200, r: 19, mass: 1.4, hue: 300 },
+          { label: "Kucing", score: 90,  r: 17, mass: 1.1, hue: 20  },
+          { label: "Dino",  score: 160, r: 18, mass: 1.3, hue: 120 },
+          { label: "UFO",   score: 250, r: 20, mass: 1.6, hue: 180 },
+        ];
+        const w = [0.26, 0.20, 0.14, 0.20, 0.14, 0.06];
+        const s = w.reduce((a, b) => a + b, 0);
+        const t = Math.random() * s;
+        let acc = 0;
+        for (let i = 0; i < defs.length; i++) {
+          acc += w[i];
+          if (t <= acc) return defs[i];
+        }
+        return defs[0];
+      }
+
+      function makeToys(count, W, H, bay) {
+        const floorY = bay.y1 - H * 0.04;
+        const left = bay.x0 + W * 0.03;
+        const right = bay.x1 - W * 0.03;
+        const toys = [];
+        for (let i = 0; i < count; i++) {
+          const def = pickToyDefinition();
+          const r = def.r + rand(-1, 2);
+          const id = `${Date.now()}-${i}-${Math.random().toString(16).slice(2)}`;
+
+          let x = rand(left + r, right - r);
+          let y = rand(floorY - 80, floorY - 10);
+
+          for (let tries = 0; tries < 40; tries++) {
+            const ok = toys.every((t) => !circleOverlap({ x, y, r }, { x: t.x, y: t.y, r: t.r + 2 }));
+            if (ok) break;
+            x = rand(left + r, right - r);
+            y = rand(floorY - 90, floorY - 8);
+          }
+
+          toys.push({
+            id, x, y, r,
+            mass: def.mass,
+            vx: rand(-10, 10),
+            vy: rand(-5, 5),
+            rot: rand(0, Math.PI * 2),
+            vr: rand(-1.0, 1.0),
+            score: def.score,
+            label: def.label,
+            hue: def.hue + rand(-12, 12),
+            grabbed: false,
+            removed: false,
+          });
+        }
+        return toys;
+      }
+
+      // ===== Game State =====
+      const canvas = document.getElementById("c");
+      const wrap = document.getElementById("wrap");
+      const ctx = canvas.getContext("2d");
+
+      const scoreEl = document.getElementById("score");
+      const lastEl = document.getElementById("last");
+      const resetBtn = document.getElementById("resetBtn");
+      const muteBtn = document.getElementById("muteBtn");
+
+      let muted = false;
+      let score = 0;
+      let lastWin = null;
+
+      const st = {
+        dpr: 1,
+        w: 900,
+        h: 540,
+        bay: { x0: 0, y0: 0, x1: 0, y1: 0 },
+        dropZone: { x: 0, y: 0, w: 0, h: 0 },
+
+        input: { left: false, right: false, drop: false },
+
+        trolley: { x: 450, y: 70, vx: 0, targetX: 450 },
+
+        rope: { len: 90, v: 0, min: 80, max: 340, target: 90 },
+
+        claw: { open: 1, v: 0, target: 1, swing: 0, swingV: 0 },
+
+        grabbedId: null,
+
+        phase: "IDLE", // IDLE | DROPPING | CLOSING | LIFTING | RETURNING | RELEASING
+        phaseT: 0,
+
+        toys: [],
+        sparkles: [],
+      };
+
+      function maybePlay(fn) { if (!muted) fn.call(audio); }
+
+      function setHUD() {
+        scoreEl.textContent = formatScore(score);
+        lastEl.textContent = lastWin ? `${lastWin.label} (+${lastWin.score})` : "—";
+        muteBtn.textContent = muted ? "Unmute" : "Mute";
+      }
+
+      function resize() {
+        const r = wrap.getBoundingClientRect();
+        const W = Math.max(560, Math.floor(r.width));
+        const H = Math.max(420, Math.floor(r.height));
+        st.dpr = Math.min(2, window.devicePixelRatio || 1);
+        st.w = W; st.h = H;
+
+        canvas.width = Math.floor(W * st.dpr);
+        canvas.height = Math.floor(H * st.dpr);
+
+        st.bay.x0 = W * 0.08;
+        st.bay.x1 = W * 0.92;
+        st.bay.y0 = H * 0.08;
+        st.bay.y1 = H * 0.88;
+
+        st.dropZone.w = W * 0.16;
+        st.dropZone.h = H * 0.12;
+        st.dropZone.x = st.bay.x0 + W * 0.01;
+        st.dropZone.y = st.bay.y1 - st.dropZone.h - H * 0.015;
+
+        st.rope.min = H * 0.13;
+        st.rope.max = H * 0.62;
+
+        st.trolley.y = st.bay.y0 + H * 0.04;
+        st.trolley.x = clamp(st.trolley.x, st.bay.x0 + 40, st.bay.x1 - 40);
+        st.trolley.targetX = st.trolley.x;
+
+        if (st.toys.length === 0) st.toys = makeToys(14, W, H, st.bay);
+      }
+
+      function resetGame() {
+        st.phase = "IDLE";
+        st.phaseT = 0;
+        st.grabbedId = null;
+
+        st.trolley.vx = 0;
+
+        st.rope.v = 0;
+        st.rope.target = st.rope.min + 10;
+        st.rope.len = st.rope.target;
+
+        st.claw.v = 0;
+        st.claw.swing = 0;
+        st.claw.swingV = 0;
+        st.claw.open = 1;
+        st.claw.target = 1;
+
+        st.sparkles = [];
+        st.toys = makeToys(14, st.w, st.h, st.bay);
+
+        score = 0;
+        lastWin = null;
+        setHUD();
+      }
+
+      // ===== Input =====
+      window.addEventListener("resize", resize);
+
+      window.addEventListener("keydown", async (e) => {
+        if (["ArrowLeft", "ArrowRight", " ", "ArrowDown", "KeyA", "KeyD"].includes(e.code)) e.preventDefault();
+        if (e.code === "KeyR") return resetGame();
+        if (e.code === "KeyM") { muted = !muted; return setHUD(); }
+
+        await audio.resume();
+
+        if (e.code === "ArrowLeft" || e.code === "KeyA") st.input.left = true;
+        if (e.code === "ArrowRight" || e.code === "KeyD") st.input.right = true;
+        if (e.code === "Space" || e.code === "ArrowDown") st.input.drop = true;
+      }, { passive: false });
+
+      window.addEventListener("keyup", (e) => {
+        if (e.code === "ArrowLeft" || e.code === "KeyA") st.input.left = false;
+        if (e.code === "ArrowRight" || e.code === "KeyD") st.input.right = false;
+        if (e.code === "Space" || e.code === "ArrowDown") st.input.drop = false;
+      });
+
+      wrap.addEventListener("pointerdown", async (e) => {
+        wrap.setPointerCapture(e.pointerId);
+        await audio.resume();
+        const rect = wrap.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        st.trolley.targetX = clamp(x, st.bay.x0 + 55, st.bay.x1 - 55);
+      });
+
+      let lastTap = 0;
+      wrap.addEventListener("pointerup", () => {
+        const now = performance.now();
+        if (now - lastTap < 300) {
+          st.input.drop = true;
+          setTimeout(() => (st.input.drop = false), 80);
+        }
+        lastTap = now;
+      });
+
+      wrap.addEventListener("dblclick", () => {
+        st.input.drop = true;
+        setTimeout(() => (st.input.drop = false), 80);
+      });
+
+      resetBtn.addEventListener("click", resetGame);
+      muteBtn.addEventListener("click", () => { muted = !muted; setHUD(); });
+
+      // ===== Core Mechanics =====
+      function getClawTip() {
+        const base = { x: st.trolley.x, y: st.trolley.y };
+        const ang = st.claw.swing;
+        const dx = Math.sin(ang) * st.rope.len;
+        const dy = Math.cos(ang) * st.rope.len;
+        return { x: base.x + dx, y: base.y + dy };
+      }
+
+      function tryGrab(tip) {
+        const gripR = 22 + st.claw.open * 10;
+        const candidates = st.toys
+          .filter((t) => !t.removed)
+          .map((t) => ({ t, d: dist({ x: t.x, y: t.y }, tip) - t.r }))
+          .sort((a, b) => a.d - b.d);
+
+        const best = candidates[0];
+        if (!best) return null;
+        if (best.d > gripR) return null;
+
+        const pBase = clamp(1 - best.d / gripR, 0, 1);
+        const pMass = clamp(1.15 - best.t.mass * 0.45, 0.25, 1.0);
+        const p = clamp(pBase * pBase * pMass, 0, 1);
+        if (Math.random() > p) return null;
+
+        best.t.grabbed = true;
+        return best.t;
+      }
+
+      function spawnSparkles(at, hue) {
+        for (let i = 0; i < 26; i++) {
+          const a = rand(0, Math.PI * 2);
+          const sp = rand(120, 320);
+          st.sparkles.push({
+            x: at.x, y: at.y,
+            vx: Math.cos(a) * sp,
+            vy: Math.sin(a) * sp - rand(50, 220),
+            life: rand(0.6, 1.1),
+            hue: hue + rand(-20, 20),
+          });
+        }
+      }
+
+      function releaseIfAny() {
+        if (!st.grabbedId) return;
+        const t = st.toys.find((x) => x.id === st.grabbedId);
+        if (!t || t.removed) { st.grabbedId = null; return; }
+
+        const dz = st.dropZone;
+        const inDrop = t.x > dz.x && t.x < dz.x + dz.w && t.y > dz.y && t.y < dz.y + dz.h;
+
+        t.grabbed = false;
+        st.grabbedId = null;
+
+        if (inDrop) {
+          t.removed = true;
+          score += t.score;
+          lastWin = { label: t.label, score: t.score };
+          setHUD();
+          spawnSparkles({ x: t.x, y: t.y }, t.hue);
+          maybePlay(audio.score);
+
+          const alive = st.toys.filter((x) => !x.removed);
+          if (alive.length < 10) st.toys.push(...makeToys(4, st.w, st.h, st.bay));
+        } else {
+          t.vx += rand(-60, 60);
+          t.vy += rand(-20, 10);
+          t.vr += rand(-3, 3);
+        }
+      }
+
+      function simulateToys(dt, tip) {
+        const W = st.w, H = st.h;
+        const floorY = st.bay.y1 - H * 0.04;
+        const left = st.bay.x0 + W * 0.03;
+        const right = st.bay.x1 - W * 0.03;
+
+        const grabbed = st.grabbedId ? st.toys.find((t) => t.id === st.grabbedId) : null;
+
+        if (grabbed && !grabbed.removed) {
+          const followK = 80;
+          const followC = 16;
+          const dx = tip.x - grabbed.x;
+          const dy = tip.y + 10 - grabbed.y;
+
+          const stress = Math.abs(st.claw.swingV) * 0.9 + Math.abs(st.trolley.vx) / (W * 0.25);
+          const slipP = clamp((grabbed.mass - 1.0) * 0.09 + stress * 0.05, 0, 0.25) * dt;
+
+          if (Math.random() < slipP && st.phase !== "CLOSING") {
+            grabbed.grabbed = false;
+            st.grabbedId = null;
+            maybePlay(audio.miss);
+          } else {
+            grabbed.vx += (followK * dx - followC * grabbed.vx) * dt;
+            grabbed.vy += (followK * dy - followC * grabbed.vy) * dt;
+            grabbed.rot += grabbed.vr * dt;
+            grabbed.vr += clamp(st.claw.swingV * 0.6, -6, 6) * dt;
+          }
+        }
+
+        for (const t of st.toys) {
+          if (t.removed) continue;
+          if (t.grabbed) {
+            t.vx *= Math.pow(0.92, dt * 60);
+            t.vy *= Math.pow(0.92, dt * 60);
+            t.vr *= Math.pow(0.92, dt * 60);
+            continue;
+          }
+
+          t.vy += 820 * dt;
+
+          t.x += t.vx * dt;
+          t.y += t.vy * dt;
+          t.rot += t.vr * dt;
+
+          t.vx *= Math.pow(0.985, dt * 60);
+          t.vy *= Math.pow(0.995, dt * 60);
+          t.vr *= Math.pow(0.99, dt * 60);
+
+          if (t.x - t.r < left) {
+            t.x = left + t.r;
+            t.vx = Math.abs(t.vx) * 0.55;
+            t.vr += rand(-0.9, 0.9);
+          } else if (t.x + t.r > right) {
+            t.x = right - t.r;
+            t.vx = -Math.abs(t.vx) * 0.55;
+            t.vr += rand(-0.9, 0.9);
+          }
+
+          if (t.y + t.r > floorY) {
+            t.y = floorY - t.r;
+            t.vy = -Math.abs(t.vy) * 0.28;
+            t.vx *= 0.92;
+            t.vr *= 0.92;
+            if (Math.abs(t.vy) < 30) t.vy = 0;
+          }
+        }
+
+        const alive = st.toys.filter((t) => !t.removed && !t.grabbed);
+        for (let i = 0; i < alive.length; i++) {
+          for (let j = i + 1; j < alive.length; j++) {
+            const a = alive[i], b = alive[j];
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const d = Math.hypot(dx, dy);
+            const minD = a.r + b.r;
+            if (d <= 0 || d >= minD) continue;
+
+            const nx = dx / d, ny = dy / d;
+            const pen = minD - d;
+
+            const total = a.mass + b.mass;
+            const ra = b.mass / total;
+            const rb = a.mass / total;
+            a.x -= nx * pen * ra;
+            a.y -= ny * pen * ra;
+            b.x += nx * pen * rb;
+            b.y += ny * pen * rb;
+
+            const rvx = b.vx - a.vx;
+            const rvy = b.vy - a.vy;
+            const vn = rvx * nx + rvy * ny;
+            if (vn > 0) continue;
+
+            const e = 0.22;
+            const jImp = (-(1 + e) * vn) / (1 / a.mass + 1 / b.mass);
+            const ix = jImp * nx, iy = jImp * ny;
+            a.vx -= ix / a.mass; a.vy -= iy / a.mass;
+            b.vx += ix / b.mass; b.vy += iy / b.mass;
+
+            a.vr += rand(-0.6, 0.6);
+            b.vr += rand(-0.6, 0.6);
+          }
+        }
+      }
+
+      // ===== Render =====
+      function drawMachine() {
+        const { x0, y0, x1, y1 } = st.bay;
+        const W = st.w, H = st.h;
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(124, 255, 232, 0.45)";
+        ctx.fillStyle = "rgba(16, 26, 44, 0.72)";
+        textShadow(ctx, true);
+        drawRoundedRect(ctx, x0, y0, x1 - x0, y1 - y0, 20);
+        ctx.fill();
+        textShadow(ctx, false);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.moveTo(x0 + (x1 - x0) * 0.1, y0 + 8);
+        ctx.lineTo(x0 + (x1 - x0) * 0.35, y0 + 8);
+        ctx.lineTo(x0 + (x1 - x0) * 0.55, y1 - 10);
+        ctx.lineTo(x0 + (x1 - x0) * 0.3, y1 - 10);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        const floorY = y1 - H * 0.04;
+        const fg = ctx.createLinearGradient(0, floorY - 60, 0, floorY + 40);
+        fg.addColorStop(0, "rgba(255,255,255,0.08)");
+        fg.addColorStop(1, "rgba(0,0,0,0.55)");
+        ctx.fillStyle = fg;
+        drawRoundedRect(ctx, x0 + 10, floorY - 35, x1 - x0 - 20, 55, 16);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(x0 + 30, st.trolley.y);
+        ctx.lineTo(x1 - 30, st.trolley.y);
+        ctx.stroke();
+
+        const dz = st.dropZone;
+        ctx.fillStyle = "rgba(255, 200, 80, 0.15)";
+        ctx.strokeStyle = "rgba(255, 200, 80, 0.45)";
+        ctx.lineWidth = 2;
+        drawRoundedRect(ctx, dz.x, dz.y, dz.w, dz.h, 14);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255, 220, 120, 0.9)";
+        ctx.font = "600 12px ui-sans-serif, system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText("DROP", dz.x + dz.w / 2, dz.y + dz.h / 2 + 4);
+
+        const plateW = W * 0.26;
+        const plateH = H * 0.07;
+        const px = x0 + (x1 - x0) / 2 - plateW / 2;
+        const py = y0 - plateH * 0.5;
+        ctx.fillStyle = "rgba(20, 32, 58, 0.95)";
+        ctx.strokeStyle = "rgba(124, 255, 232, 0.4)";
+        ctx.lineWidth = 2;
+        drawRoundedRect(ctx, px, py, plateW, plateH, 18);
+        textShadow(ctx, true);
+        ctx.fill();
+        textShadow(ctx, false);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(170, 255, 246, 0.92)";
+        ctx.font = "700 16px ui-sans-serif, system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText("MESIN CAPIT", px + plateW / 2, py + plateH / 2 + 6);
+      }
+
+      function drawToys() {
+        for (const t of st.toys) {
+          if (t.removed) continue;
+
+          ctx.save();
+          ctx.translate(t.x, t.y);
+          ctx.rotate(t.rot);
+
+          const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, t.r * 2.4);
+          glow.addColorStop(0, hsl(t.hue, 80, 55, 0.35));
+          glow.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(0, 0, t.r * 2.1, 0, Math.PI * 2);
+          ctx.fill();
+
+          const grad = ctx.createRadialGradient(-t.r * 0.3, -t.r * 0.3, 2, 0, 0, t.r * 1.3);
+          grad.addColorStop(0, hsl(t.hue, 90, 72, 0.95));
+          grad.addColorStop(1, hsl(t.hue, 70, 38, 0.95));
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(0, 0, t.r, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.globalAlpha = 0.22;
+          ctx.fillStyle = "white";
+          ctx.beginPath();
+          ctx.arc(-t.r * 0.25, -t.r * 0.25, t.r * 0.55, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.font = "700 10px ui-sans-serif, system-ui";
+          ctx.textAlign = "center";
+          ctx.fillText(t.label, 0, 4);
+
+          ctx.restore();
+        }
+      }
+
+      function drawClaw() {
+        const base = { x: st.trolley.x, y: st.trolley.y };
+        const tip = getClawTip();
+
+        // trolley
+        ctx.save();
+        ctx.translate(base.x, base.y);
+        ctx.fillStyle = "rgba(255,255,255,0.16)";
+        ctx.strokeStyle = "rgba(255,255,255,0.28)";
+        ctx.lineWidth = 2;
+        drawRoundedRect(ctx, -28, -16, 56, 28, 10);
+        textShadow(ctx, true);
+        ctx.fill();
+        textShadow(ctx, false);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = "rgba(124, 255, 232, 0.8)";
+        drawRoundedRect(ctx, -18, -8, 36, 12, 8);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.restore();
+
+        // rope chain
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(base.x, base.y);
+        const seg = 14;
+        const n = Math.max(6, Math.floor(st.rope.len / seg));
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          const wobble = Math.sin((t * 2.4 + st.claw.swing) * Math.PI) * (1 - t) * 6;
+          const x = lerp(base.x, tip.x, t) + wobble;
+          const y = lerp(base.y, tip.y, t);
+          ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          const x = lerp(base.x, tip.x, t);
+          const y = lerp(base.y, tip.y, t);
+          ctx.beginPath();
+          ctx.arc(x, y, 1.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // claw
+        ctx.save();
+        ctx.translate(tip.x, tip.y);
+        ctx.rotate(st.claw.swing);
+
+        const headR = 10;
+        const open = st.claw.open;
+        const spread = lerp(0.15, 0.65, open);
+
+        const hg = ctx.createRadialGradient(-4, -4, 2, 0, 0, headR * 1.7);
+        hg.addColorStop(0, "rgba(255,255,255,0.9)");
+        hg.addColorStop(1, "rgba(160, 190, 210, 0.95)");
+        ctx.fillStyle = hg;
+        ctx.beginPath();
+        ctx.arc(0, 0, headR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(230, 245, 255, 0.85)";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+
+        const armLen = 26;
+        const bend = 0.38;
+
+        for (const side of [-1, 1, 0]) {
+          const ang = side === 0 ? 0 : side * spread;
+          ctx.save();
+          ctx.rotate(ang);
+          ctx.beginPath();
+          ctx.moveTo(0, headR - 1);
+          ctx.quadraticCurveTo(armLen * 0.25, headR + armLen * bend, armLen * 0.4, headR + armLen * 0.9);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(armLen * 0.35, headR + armLen * 0.86);
+          ctx.quadraticCurveTo(armLen * 0.5, headR + armLen * 1.0, armLen * 0.25, headR + armLen * 1.05);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        ctx.globalAlpha = 0.16;
+        ctx.strokeStyle = "rgba(124, 255, 232, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, headR + 24, 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        ctx.restore();
+      }
+
+      function drawSparkles(dt) {
+        st.sparkles = st.sparkles
+          .map((p) => ({ ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 600 * dt, life: p.life - dt }))
+          .filter((p) => p.life > 0);
+
+        for (const p of st.sparkles) {
+          const a = smoothstep(p.life);
+          ctx.globalAlpha = clamp(a, 0, 1);
+          ctx.fillStyle = hsl(p.hue, 90, 60, 0.9);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function drawHintsOnCanvas() {
+        const W = st.w, H = st.h;
+        ctx.fillStyle = "rgba(255,255,255,0.14)";
+        ctx.font = "600 12px ui-sans-serif, system-ui";
+        ctx.textAlign = "left";
+        ctx.fillText("←/→ atau A/D: geser", W * 0.10, H * 0.95);
+        ctx.fillText("SPACE/↓: jatuhkan", W * 0.10, H * 0.95 + 16);
+        ctx.fillText("R: reset   M: mute", W * 0.10, H * 0.95 + 32);
+      }
+
+      function render(dt) {
+        ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0);
+
+        const W = st.w, H = st.h;
+
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, "#0b1220");
+        g.addColorStop(0.5, "#101b2c");
+        g.addColorStop(1, "#0b1020");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.globalAlpha = 0.08;
+        for (let i = 0; i < 60; i++) {
+          const x = (i * 97) % W;
+          const y = (i * 173) % (H * 0.55);
+          ctx.fillStyle = "white";
+          ctx.fillRect(x, y, 2, 2);
+        }
+        ctx.globalAlpha = 1;
+
+        drawMachine();
+        drawToys();
+        drawClaw();
+        drawSparkles(dt);
+        drawHintsOnCanvas();
+      }
+
+      // ===== Update Loop =====
+      function update(dt) {
+        const W = st.w, H = st.h;
+
+        // input -> targetX
+        if (st.phase === "IDLE") {
+          const speed = W * 0.55;
+          if (st.input.left) st.trolley.targetX -= speed * dt;
+          if (st.input.right) st.trolley.targetX += speed * dt;
+          st.trolley.targetX = clamp(st.trolley.targetX, st.bay.x0 + 55, st.bay.x1 - 55);
+
+          if (st.input.drop) {
+            st.phase = "DROPPING";
+            st.phaseT = 0;
+            st.rope.target = st.rope.max;
+            st.claw.target = 1;
+            maybePlay(audio.drop);
+          }
+        }
+
+        // trolley spring
+        {
+          const k = 70, c = 14;
+          const x = st.trolley.x, v = st.trolley.vx;
+          const a = -k * (x - st.trolley.targetX) - c * v;
+          st.trolley.vx += a * dt;
+          st.trolley.x += st.trolley.vx * dt;
+          st.trolley.x = clamp(st.trolley.x, st.bay.x0 + 55, st.bay.x1 - 55);
+
+          if (st.phase === "IDLE" && (st.input.left || st.input.right) && Math.random() < 0.08) {
+            maybePlay(audio.tick);
+          }
+        }
+
+        // rope spring
+        {
+          const k = 90, c = 18;
+          const x = st.rope.len, v = st.rope.v;
+          const a = -k * (x - st.rope.target) - c * v;
+          st.rope.v += a * dt;
+          st.rope.len += st.rope.v * dt;
+          st.rope.len = clamp(st.rope.len, st.rope.min, st.rope.max);
+        }
+
+        // claw open/close spring
+        {
+          const k = 120, c = 20;
+          const x = st.claw.open, v = st.claw.v;
+          const a = -k * (x - st.claw.target) - c * v;
+          st.claw.v += a * dt;
+          st.claw.open += st.claw.v * dt;
+          st.claw.open = clamp(st.claw.open, 0, 1);
+        }
+
+        // swing
+        {
+          const drive = clamp(st.trolley.vx / (W * 0.8), -1, 1);
+          const drive2 = clamp(st.rope.v / (H * 0.9), -1, 1);
+          const target = (drive * 0.22 + drive2 * 0.16) * Math.PI;
+          const k = 10, c = 2.4;
+          const a = -k * (st.claw.swing - target) - c * st.claw.swingV;
+          st.claw.swingV += a * dt;
+          st.claw.swing += st.claw.swingV * dt;
+          st.claw.swing *= 0.999;
+        }
+
+        st.phaseT += dt;
+        const tip = getClawTip();
+
+        if (st.phase === "DROPPING") {
+          if (Math.abs(st.rope.len - st.rope.max) < 2.0 && Math.abs(st.rope.v) < 4) {
+            st.phase = "CLOSING";
+            st.phaseT = 0;
+            st.claw.target = 0;
+          }
+        } else if (st.phase === "CLOSING") {
+          if (st.phaseT > 0.22 && st.claw.open < 0.25) {
+            const grabbed = tryGrab(tip);
+            if (grabbed) {
+              st.grabbedId = grabbed.id;
+              maybePlay(audio.grab);
+            } else {
+              maybePlay(audio.miss);
+            }
+            st.phase = "LIFTING";
+            st.phaseT = 0;
+            st.rope.target = st.rope.min;
+          }
+        } else if (st.phase === "LIFTING") {
+          if (Math.abs(st.rope.len - st.rope.min) < 2.2 && Math.abs(st.rope.v) < 4) {
+            st.phase = "RETURNING";
+            st.phaseT = 0;
+            st.trolley.targetX = st.dropZone.x + st.dropZone.w * 0.5;
+          }
+        } else if (st.phase === "RETURNING") {
+          const okX = Math.abs(st.trolley.x - (st.dropZone.x + st.dropZone.w * 0.5)) < 3.2;
+          const okV = Math.abs(st.trolley.vx) < 10;
+          if (okX && okV) {
+            st.phase = "RELEASING";
+            st.phaseT = 0;
+            st.claw.target = 1;
+          }
+        } else if (st.phase === "RELEASING") {
+          if (st.phaseT > 0.25 && st.claw.open > 0.7) {
+            releaseIfAny();
+            st.phase = "IDLE";
+            st.phaseT = 0;
+          }
+        }
+
+        simulateToys(dt, tip);
+      }
+
+      // ===== Start =====
+      resize();
+      resetGame();
+      setHUD();
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = clamp((now - last) / 1000, 0.001, 0.033);
+        last = now;
+        update(dt);
+        render(dt);
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>
